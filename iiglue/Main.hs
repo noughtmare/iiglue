@@ -4,17 +4,16 @@ module Main ( main ) where
 import Control.Applicative
 import Control.Exception ( tryJust )
 import Control.Lens ( Lens', lens, (.~), view, set )
-import Control.Monad ( guard, liftM )
+import Control.Monad ( guard )
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy.Char8 as LBC
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Csv as CSV
 import qualified Data.Foldable as F
 import Data.Maybe ( mapMaybe )
-import Data.Monoid
-import qualified Data.Text.Lazy as LText
 import qualified Data.Text.Lazy.Builder as LText
 import qualified Data.Text.Lazy.Builder.RealFloat as LText
 import qualified Data.Text.Lazy.Encoding as LText
-import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as UV
 import Options.Applicative
 import System.Environment ( getEnv )
@@ -28,7 +27,8 @@ import LLVM.Analysis.CallGraph
 import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.UsesOf
 import LLVM.Analysis.Util.Testing
-import LLVM.Parse
+import Data.LLVM.BitCode
+import Text.LLVM.Resolve
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
@@ -131,14 +131,14 @@ main = do
 realMain :: Opts -> IO ()
 realMain opts = do
   let name = takeBaseName (inputFile opts)
-      parseOpts = case librarySource opts of
-        Nothing -> defaultParserOptions { metaPositionPrecision = PositionNone }
-        Just _ -> defaultParserOptions
-  mm <- buildModule [] requiredOptimizations (parseLLVMFile parseOpts) (inputFile opts)
+  mm <- buildModule []
+                    requiredOptimizations
+                    (\_ h -> fmap (either (error . show) resolve) . parseBitCode =<< B.hGetContents h)
+                    (inputFile opts)
   dump opts name mm
 
 elns :: Lens' AnalysisSummary (Maybe ErrorSummary)
-elns = lens (Just . (view errorHandlingSummary)) (\s n -> maybe s (\n' -> set errorHandlingSummary n' s) n)
+elns = lens (Just . view errorHandlingSummary) (\s n -> maybe s (\n' -> set errorHandlingSummary n' s) n)
 
 dump :: Opts -> String -> Module -> IO ()
 dump opts name m = do
@@ -158,7 +158,7 @@ dump opts name m = do
   -- Have to give a type signature here to fix all of the FuncLike
   -- constraints to our metadata blob.
   let funcLikes :: [FunctionMetadata]
-      funcLikes = map fromFunction (moduleDefinedFunctions m)
+      funcLikes = map fromDefine (modDefines m)
       uses = computeUsesOf m
       errCfg = defaultErrorAnalysisOptions { errorClassifier = classifier
                                            , generalizeFromReturns = not (noGeneralizeErrorCodes opts)
@@ -195,9 +195,7 @@ dump opts name m = do
   let errDat = errorHandlingTrainingData funcLikes ds uses pta errCfg
   F.for_ (dumpErrorFeatures opts) (dumpCSV errDat)
 
-  case formatDiagnostics (diagnosticLevel opts) diags of
-    Nothing -> return ()
-    Just diagString -> putStrLn diagString
+  F.forM_ (formatDiagnostics (diagnosticLevel opts) diags) putStrLn
 
   -- Persist the module summary
   saveModule repo name deps m summaries ds
@@ -212,8 +210,8 @@ dumpCSV dat file = LBS.writeFile file (CSV.encode dat')
     dat' = mapMaybe prettyName dat
     dblToTxt = LText.encodeUtf8 . LText.toLazyText . LText.realFloat
     prettyName (v, row) = do
-      ident <- valueName v
-      let bs = LText.encodeUtf8 $ LText.fromChunks [identifierContent ident]
+      ident <- valName v
+      let bs = LBC.pack ident
       return $ bs : map dblToTxt (UV.toList row)
 
 writeSummary :: Module -> [ModuleSummary] -> DependencySummary -> FilePath -> IO ()

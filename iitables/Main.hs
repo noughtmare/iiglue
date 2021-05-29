@@ -2,10 +2,9 @@
 module Main ( main ) where
 
 import Control.Applicative
-import Data.Monoid
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import Options.Applicative hiding ( (&) )
+import Options.Applicative
 import System.FilePath
 import Text.LaTeX.Base as Tex
 
@@ -23,7 +22,7 @@ cmdOpts =  Opts
       <> short 'r'
       <> metavar "DIR"
       <> help "The root directory in which generated tables will be placed")
-  <*> arguments str ( metavar "FILE" )
+  <*> some (argument str ( metavar "FILES..." ))
 
 main :: IO ()
 main = execParser args >>= realMain
