@@ -20,6 +20,8 @@ executable iiglue
   build-depends: base == 4.*,
                  optparse-applicative >= 0.16 && < 0.17,
                  llvm-analysis >= 0.2.0,
+                 pretty,
+                 llvm-pretty,
                  llvm-pretty-bc-parser,
                  llvm-pretty-referential,
                  foreign-inference >= 0.2.0,

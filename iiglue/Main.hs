@@ -28,7 +28,9 @@ import LLVM.Analysis.CallGraphSCCTraversal
 import LLVM.Analysis.UsesOf
 import LLVM.Analysis.Util.Testing
 import Data.LLVM.BitCode
-import Text.LLVM.Resolve
+import Text.LLVM.Resolve (resolve)
+import Text.LLVM.PP (ppLLVM, ppModule)
+import Text.PrettyPrint (render)
 
 import Foreign.Inference.Diagnostics
 import Foreign.Inference.Interface
@@ -130,12 +132,22 @@ main = do
 
 realMain :: Opts -> IO ()
 realMain opts = do
-  let name = takeBaseName (inputFile opts)
-  mm <- buildModule []
-                    requiredOptimizations
-                    (\_ h -> fmap (either (error . show) resolve) . parseBitCode =<< B.hGetContents h)
-                    (inputFile opts)
-  dump opts name mm
+    let name = takeBaseName (inputFile opts)
+    mm <- buildModule []
+                      requiredOptimizations
+                      readBitcode
+                      (inputFile opts)
+    dump opts name mm
+  where
+    readBitcode _ h = do
+      bc <- B.hGetContents h
+      ll <- parseBitCode bc
+      case ll of
+        Left e -> error (show e)
+        Right x -> do
+          -- writeFile "/tmp/iiglue" (render (ppLLVM (ppModule x)))
+          return (resolve x)
+      --fmap (either (error . show) resolve) . parseBitCode =<< B.hGetContents h)
 
 elns :: Lens' AnalysisSummary (Maybe ErrorSummary)
 elns = lens (Just . view errorHandlingSummary) (\s n -> maybe s (\n' -> set errorHandlingSummary n' s) n)
@@ -183,7 +195,8 @@ dump opts name m = do
                , identifyAllocators ds pta allocatorSummary escapeSummary finalizerSummary outputSummary
                ]
       phase1Func = callGraphComposeAnalysis phase1
-      phase1Res = parallelCallGraphSCCTraversal cg phase1Func res0
+      -- phase1Res = parallelCallGraphSCCTraversal cg phase1Func res0
+      phase1Res = monolithicTraversal cg phase1Func res0
       -- The transferRes includes (builds on) the phase1Res.  The
       -- transfer analysis depends on finalizers and symbolic access paths
       transferRes = identifyTransfers funcLikes cg ds pta phase1Res finalizerSummary sapSummary transferSummary
